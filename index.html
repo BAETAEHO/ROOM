@@ -485,8 +485,29 @@
                 scheduleData = data.reservations || {};
                 
                 initTableRows();
-                // 처음 접속 시 기본적으로 2주일치 테이블을 보여줍니다.
-                renderWeeks(2, false); 
+                
+                // 저장된 일정 중 가장 먼 미래의 날짜를 찾아 렌더링할 주(week) 수 계산
+                let weeksToRender = 2; // 기본적으로 최소 2주는 표시
+                if (Object.keys(scheduleData).length > 0) {
+                    let maxTime = baseMonday.getTime();
+                    for (const key of Object.keys(scheduleData)) {
+                        // 키값(YYYY-MM-DD_WD 또는 YYYY-MM-DD)에서 날짜 부분만 추출
+                        const dateStr = key.replace('_WD', '');
+                        const parts = dateStr.split('-');
+                        if (parts.length === 3) {
+                            const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+                            if (dateObj.getTime() > maxTime) {
+                                maxTime = dateObj.getTime();
+                            }
+                        }
+                    }
+                    // 오늘 기준 월요일(baseMonday)부터 가장 먼 미래 일정까지 며칠 차이나는지 계산
+                    const diffDays = Math.floor((maxTime - baseMonday.getTime()) / (1000 * 60 * 60 * 24));
+                    const neededWeeks = Math.floor(diffDays / 7) + 1;
+                    weeksToRender = Math.max(2, neededWeeks); // 최소 2주는 유지하면서 필요한 만큼 주 추가
+                }
+                
+                renderWeeks(weeksToRender, false); 
                 loadLogs();
             })
             .catch(error => {

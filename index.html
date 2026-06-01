@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>교회 모임장소 예약 현황</title>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+            margin: 20px;
+            color: #333;
+            line-height: 1.5;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        /* 공지사항 스타일 */
+        .notice-board {
+            background-color: #f8f9fa;
+            border-left: 5px solid #0d6efd;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 0.95em;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        /* 테이블 래퍼 (가로 스크롤) */
+        .table-container {
+            overflow-x: auto;
+            max-width: 100%;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+
+        table {
+            border-collapse: collapse;
+            width: max-content;
+        }
+
+        th, td {
+            border: 1px solid #dee2e6;
+            padding: 12px 15px;
+            text-align: center;
+            white-space: nowrap;
+            min-width: 100px;
+        }
+
+        th {
+            background-color: #f1f3f5;
+        }
+
+        /* 왼쪽 장소 고정 (Sticky) */
+        .sticky-room {
+            position: sticky;
+            left: 0;
+            background-color: #f8f9fa;
+            font-weight: bold;
+            z-index: 2;
+            border-right: 2px solid #adb5bd;
+        }
+        
+        /* 헤더의 첫번째 칸은 z-index를 더 높여서 겹치지 않게 함 */
+        thead .sticky-room {
+            z-index: 3;
+        }
+
+        /* 이번 주 음영 표시 */
+        .this-week {
+            background-color: #e6ffe6 !important;
+        }
+
+        /* 일정 추가 버튼 */
+        .btn-container {
+            margin-top: 15px;
+            text-align: right;
+        }
+
+        .btn-add {
+            background-color: #198754;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .btn-add:hover {
+            background-color: #157347;
+        }
+
+        /* 수정 모드 관련 스타일 */
+        .editable-cell {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .editable-cell:hover {
+            background-color: #ffeeba !important;
+        }
+        .btn-edit {
+            background-color: #ffc107;
+            color: #000;
+        }
+        .btn-save {
+            background-color: #0d6efd;
+            color: white;
+            display: none; /* 기본은 숨김 */
+        }
+
+        /* 변경 이력(로그) 창 스타일 */
+        .log-container {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            height: 200px;
+            overflow-y: auto;
+            font-size: 0.9em;
+        }
+        .log-item {
+            border-bottom: 1px solid #e9ecef;
+            padding: 8px 0;
+        }
+        .log-time {
+            color: #6c757d;
+            font-size: 0.85em;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>교회 모임장소 예약 현황</h1>
+
+    <div class="notice-board" id="notice-content">
+        <!-- JSON에서 공지사항을 불러와 여기에 표시합니다. -->
+        공지사항을 불러오는 중입니다...
+    </div>
+
+    <div class="table-container">
+        <table id="schedule-table">
+            <thead>
+                <tr id="thead-row">
+                    <th class="sticky-room">모임 장소</th>
+                    <!-- 날짜 헤더가 JavaScript를 통해 이 위치에 추가됩니다. -->
+                </tr>
+            </thead>
+            <tbody id="tbody">
+                <!-- 장소별 행이 JavaScript를 통해 이 위치에 추가됩니다. -->
+            </tbody>
+        </table>
+    </div>
+
+    <div class="btn-container">
+        <button class="btn-add btn-edit" id="btn-edit" onclick="toggleEditMode()">수정 모드 켜기</button>
+        <button class="btn-add btn-save" id="btn-save" onclick="saveToServer()">저장하기</button>
+        <button class="btn-add" onclick="addNextWeek()">+ 다음 1주일 일정 추가 (2주 전 일정 복사)</button>
+    </div>
+
+    <div class="log-container">
+        <h3>변경 이력 (최근 20건)</h3>
+        <div id="log-content">로딩 중...</div>
+    </div>
+
+    <script>
+        // GitHub API 설정 (수정을 위해 필수)
+        const GITHUB_OWNER = 'baetaeho'; // GitHub 사용자명
+        const GITHUB_REPO = 'room'; // 레포지토리 이름
+        // 브라우저에 저장된 토큰이 있으면 불러오기
+        let GITHUB_TOKEN = localStorage.getItem('GITHUB_TOKEN') || ''; 
+
+        const rooms = [
+            "5층 세미나실", "5층 영아부실", "5층 유치부실", "5층 유년부실", 
+            "5층 소그룹실 1", "5층 소그룹실 2", "5층 소그룹실 3", "5층 다목적실",
+            "8층 세미나실1", "8층 세미나실2", "8층 자모실", "8층 영상예배실",
+            "9층 라운지",
+            "다음세대 건물 2층 그물코카페1", "다음세대 건물 2층 그물코카페2", "다음세대 건물 2층 그물코카페3"
+        ];
+
+        let scheduleData = {};
+        let renderedWeeks = 0; // 렌더링된 주(week) 수 기록
+        
+        // 수정 및 로그 관련 변수
+        let isEditMode = false;
+        let pendingLogs = [];
+        let currentNotice = "";
+        
+        // 기준일(오늘) 설정 및 시간 초기화
+        let today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // 이번 주 월요일 계산 (일요일(0)인 경우 이전 6일, 그 외는 해당 주 월요일)
+        let baseMonday = new Date(today);
+        let currentDayOfWeek = baseMonday.getDay();
+        let diffToMonday = currentDayOfWeek === 0 ? -6 : 1 - currentDayOfWeek;
+        baseMonday.setDate(baseMonday.getDate() + diffToMonday);
+
+        const theadRow = document.getElementById('thead-row');
+        const tbody = document.getElementById('tbody');
+
+        // YYYY-MM-DD 형식으로 변환하는 함수
+        function formatDate(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        // 장소 목록을 이용해 테이블의 기본 행(Row)들을 생성
+        function initTableRows() {
+            rooms.forEach((room, index) => {
+                const tr = document.createElement('tr');
+                tr.id = 'room-row-' + index;
+                const td = document.createElement('td');
+                td.className = 'sticky-room';
+                td.textContent = room;
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 주 단위를 계산하고 테이블의 열(Column)을 평일/토/일 3개로 묶어서 추가하는 함수
+        function renderWeeks(weeksCount, autoCopy = false) {
+            for (let i = 0; i < weeksCount; i++) {
+                const currentMonday = new Date(baseMonday);
+                currentMonday.setDate(baseMonday.getDate() + (renderedWeeks * 7));
+                
+                const currentFriday = new Date(currentMonday);
+                currentFriday.setDate(currentMonday.getDate() + 4);
+                
+                const currentSaturday = new Date(currentMonday);
+                currentSaturday.setDate(currentMonday.getDate() + 5);
+                
+                const currentSunday = new Date(currentMonday);
+                currentSunday.setDate(currentMonday.getDate() + 6);
+
+                // 평일(월~금), 토요일, 일요일 3개의 열 데이터 구성
+                const periods = [
+                    {
+                        id: `${formatDate(currentMonday)}_WD`, // 평일 식별자 (해당 주 월요일 기준)
+                        label: `${currentMonday.getMonth() + 1}/${currentMonday.getDate()}~${currentFriday.getMonth() + 1}/${currentFriday.getDate()}<br>(평일모임)`,
+                        date: currentMonday
+                    },
+                    {
+                        id: formatDate(currentSaturday),
+                        label: `${currentSaturday.getMonth() + 1}/${currentSaturday.getDate()}<br>(토)`,
+                        date: currentSaturday
+                    },
+                    {
+                        id: formatDate(currentSunday),
+                        label: `${currentSunday.getMonth() + 1}/${currentSunday.getDate()}<br>(일)`,
+                        date: currentSunday
+                    }
+                ];
+
+                const isThisWeek = (renderedWeeks === 0); // 처음 렌더링되는 첫 주가 '이번 주'
+
+                periods.forEach(period => {
+                    // 2주 전 일정 복사 로직 (버튼을 눌러 추가할 때만 동작)
+                    if (autoCopy) {
+                        const twoWeeksAgo = new Date(period.date);
+                        twoWeeksAgo.setDate(period.date.getDate() - 14);
+                        const twoWeeksAgoId = period.id.includes('_WD') ? `${formatDate(twoWeeksAgo)}_WD` : formatDate(twoWeeksAgo);
+
+                        // 2주 전 데이터가 존재한다면 복사
+                        if (scheduleData[twoWeeksAgoId]) {
+                            scheduleData[period.id] = JSON.parse(JSON.stringify(scheduleData[twoWeeksAgoId]));
+                        }
+                    }
+
+                    // 헤더 추가
+                    const th = document.createElement('th');
+                    th.innerHTML = period.label;
+                    if (isThisWeek) th.classList.add('this-week');
+                    theadRow.appendChild(th);
+
+                    // 각 장소별 예약 데이터 추가
+                    rooms.forEach((room, index) => {
+                        const tr = document.getElementById('room-row-' + index);
+                        const td = document.createElement('td');
+                        if (isThisWeek) td.classList.add('this-week');
+
+                        // 해당 기간, 해당 장소의 예약이 있으면 출력
+                        const reservation = (scheduleData[period.id] && scheduleData[period.id][room]) ? scheduleData[period.id][room] : "";
+                        td.textContent = reservation;
+                        
+                        // 클릭 이벤트 (수정 모드일 때만 동작)
+                        td.onclick = () => {
+                            if (!isEditMode) return;
+                            const promptLabel = period.label.replace('<br>', ' ');
+                            const newVal = prompt(`${promptLabel} [${room}]의 일정을 입력하세요.`, td.textContent);
+                            if (newVal !== null && newVal !== td.textContent) {
+                                const oldVal = td.textContent;
+                                td.textContent = newVal;
+                                if (!scheduleData[period.id]) scheduleData[period.id] = {};
+                                scheduleData[period.id][room] = newVal;
+                                
+                                // 로그 기록 추가
+                                const timeStr = new Date().toLocaleString('ko-KR');
+                                pendingLogs.push({ time: timeStr, details: `${promptLabel} [${room}]: '${oldVal}' ➔ '${newVal}'` });
+                            }
+                        };
+
+                        tr.appendChild(td);
+                    });
+                });
+                
+                renderedWeeks++;
+            }
+        }
+
+        // 버튼 클릭 시 1주일(7일) 추가 실행 함수
+        function addNextWeek() {
+            // 두 번째 파라미터(true)를 통해 2주 전 일정 복사를 활성화합니다.
+            renderWeeks(1, true);
+        }
+
+        // 수정 모드 토글 함수
+        function toggleEditMode() {
+            // 수정 모드를 켜려고 할 때 토큰이 없다면 물어보기
+            if (!isEditMode) {
+                if (!GITHUB_TOKEN) {
+                    const token = prompt("관리자 권한이 필요합니다. GitHub Token을 입력해주세요.");
+                    if (token) {
+                        GITHUB_TOKEN = token.trim();
+                        localStorage.setItem('GITHUB_TOKEN', GITHUB_TOKEN); // 다음 접속을 위해 브라우저에 저장
+                    } else {
+                        alert("토큰이 입력되지 않아 수정 모드를 켤 수 없습니다.");
+                        return; // 토큰 입력 취소 시 함수 종료
+                    }
+                }
+            }
+
+            isEditMode = !isEditMode;
+            const btnEdit = document.getElementById('btn-edit');
+            const btnSave = document.getElementById('btn-save');
+            const tds = document.querySelectorAll('tbody td:not(.sticky-room)');
+
+            if (isEditMode) {
+                btnEdit.textContent = "수정 모드 끄기";
+                btnEdit.style.backgroundColor = "#dc3545";
+                btnSave.style.display = "inline-block";
+                tds.forEach(td => td.classList.add('editable-cell'));
+                alert("수정 모드가 켜졌습니다. 표의 빈칸이나 일정을 클릭하여 내용을 수정하세요.");
+            } else {
+                btnEdit.textContent = "수정 모드 켜기";
+                btnEdit.style.backgroundColor = "#ffc107";
+                btnSave.style.display = "none";
+                tds.forEach(td => td.classList.remove('editable-cell'));
+            }
+        }
+
+        // 유니코드 지원 base64 인코딩
+        function utf8_to_b64(str) {
+            return window.btoa(unescape(encodeURIComponent(str)));
+        }
+
+        // GitHub API를 통한 파일 저장 (JSON)
+        async function updateGitHubFile(path, content, message) {
+            const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}`;
+            
+            // 1. 기존 파일의 sha 값 가져오기 (덮어쓰기 위해 필수)
+            let sha = null;
+            let existingData = [];
+            try {
+                const getRes = await fetch(url, { headers: { "Authorization": `token ${GITHUB_TOKEN}` } });
+                if (getRes.ok) {
+                    const getJson = await getRes.json();
+                    sha = getJson.sha;
+                    // 로그 파일일 경우 기존 데이터를 가져와서 병합
+                    if (path === 'log.json') {
+                        const decodedContent = decodeURIComponent(escape(window.atob(getJson.content)));
+                        existingData = JSON.parse(decodedContent);
+                    }
+                }
+            } catch (e) {
+                console.log(`${path} 파일 정보를 가져오는 데 실패했거나 파일이 없습니다. 새로 생성합니다.`);
+            }
+
+            // 로그 파일일 경우 기존 배열에 새로운 로그 추가
+            let finalContent = content;
+            if (path === 'log.json') {
+                finalContent = existingData.concat(content);
+            }
+
+            // 2. 파일 덮어쓰기 (PUT)
+            const encodedContent = utf8_to_b64(JSON.stringify(finalContent, null, 2));
+            const body = { message: message, content: encodedContent };
+            if (sha) body.sha = sha;
+
+            const putRes = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    "Authorization": `token ${GITHUB_TOKEN}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(body)
+            });
+            return putRes.ok;
+        }
+
+        // 변경사항 서버(GitHub)에 저장
+        async function saveToServer() {
+            if (pendingLogs.length === 0) {
+                alert("변경된 내용이 없습니다.");
+                return;
+            }
+            if (!GITHUB_TOKEN || GITHUB_TOKEN.includes('여기에_토큰을')) {
+                alert("GitHub 토큰이 설정되지 않아 저장할 수 없습니다. 소스코드에서 GITHUB_TOKEN을 설정해주세요.");
+                return;
+            }
+
+            document.getElementById('btn-save').textContent = "저장 중...";
+            document.getElementById('btn-save').disabled = true;
+
+            try {
+                // 1. 일정 데이터 저장
+                const dataSaved = await updateGitHubFile('data.json', { notice: currentNotice, reservations: scheduleData }, "일정 데이터 업데이트");
+                
+                // 2. 로그 데이터 저장
+                const logSaved = await updateGitHubFile('log.json', pendingLogs, "변경 이력 업데이트");
+
+                if (dataSaved && logSaved) {
+                    alert("저장되었습니다!\n(GitHub Pages 특성상 실제 사이트에 반영되기까지 1~2분 정도 소요될 수 있습니다.)");
+                    pendingLogs = []; // 초기화
+                    loadLogs(); // 로그 새로고침
+                    toggleEditMode(); // 수정 모드 종료
+                } else {
+                    alert("저장에 실패했습니다. 토큰 권한이나 레포지토리 이름을 확인해주세요.");
+                }
+            } catch (error) {
+                console.error(error);
+                alert("저장 중 오류가 발생했습니다.");
+            } finally {
+                document.getElementById('btn-save').textContent = "저장하기";
+                document.getElementById('btn-save').disabled = false;
+            }
+        }
+
+        // 로그 불러오기 및 렌더링
+        function loadLogs() {
+            fetch('log.json?t=' + new Date().getTime()) // 캐시 방지
+                .then(res => res.json())
+                .then(data => {
+                    const logContent = document.getElementById('log-content');
+                    if (!data || data.length === 0) {
+                        logContent.innerHTML = "변경 이력이 없습니다.";
+                        return;
+                    }
+                    // 최근 20개만 가져와서 역순(최신순)으로 정렬
+                    const latestLogs = data.slice(-20).reverse();
+                    logContent.innerHTML = latestLogs.map(log => 
+                        `<div class="log-item">
+                            <span class="log-time">[${log.time}]</span> ${log.details}
+                        </div>`
+                    ).join('');
+                })
+                .catch(err => {
+                    document.getElementById('log-content').innerHTML = "변경 이력을 불러올 수 없습니다. (log.json 파일이 없거나 생성 전입니다.)";
+                });
+        }
+
+        // 초기 데이터 로드 (JSON)
+        fetch('data.json')
+            .then(response => response.json())
+            .then(data => {
+                currentNotice = data.notice || "";
+                document.getElementById('notice-content').innerHTML = data.notice || "공지사항이 없습니다.";
+                scheduleData = data.reservations || {};
+                
+                initTableRows();
+                // 처음 접속 시 기본적으로 2주일치 테이블을 보여줍니다.
+                renderWeeks(2, false); 
+                loadLogs();
+            })
+            .catch(error => {
+                console.error("데이터를 불러오지 못했습니다.", error);
+                document.getElementById('notice-content').innerHTML = "로컬 환경에서는 JSON 파일을 불러올 수 없습니다. GitHub Pages에 올리면 정상 동작합니다.";
+                initTableRows();
+                renderWeeks(2, false);
+            });
+    </script>
+</body>
+</html>
